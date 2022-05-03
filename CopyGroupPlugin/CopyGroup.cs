@@ -1,5 +1,6 @@
 ﻿using Autodesk.Revit.Attributes;
 using Autodesk.Revit.DB;
+using Autodesk.Revit.DB.Architecture;
 using Autodesk.Revit.UI;
 using Autodesk.Revit.UI.Selection;
 using System;
@@ -15,27 +16,92 @@ namespace CopyGroupPlugin
     {
         public Result Execute(ExternalCommandData commandData, ref string message, ElementSet elements)
         {
-            UIDocument uiDoc = commandData.Application.ActiveUIDocument;
-            Document doc = uiDoc.Document;
+            try
+            {
+                UIDocument uiDoc = commandData.Application.ActiveUIDocument;
+                Document doc = uiDoc.Document;
 
-            Reference reference = uiDoc.Selection.PickObject(ObjectType.Element, "Выберите группу объектов");
+                GroupPickFilter groupPickFilter=new GroupPickFilter();
 
-            Element element = doc.GetElement(reference);
+                Reference reference = uiDoc.Selection.PickObject(ObjectType.Element, groupPickFilter, "Выберите группу объектов");
 
-            Group group = element as Group;
+                Element element = doc.GetElement(reference);
 
-            XYZ point = uiDoc.Selection.PickPoint("Выберите точку");
+                Group group = element as Group;
+                XYZ groupCenter=GetElementCenter(group);
+                Room room = GetRoomByPoint(doc, groupCenter);
+                XYZ roomcenter=GetElementCenter(room);
+                XYZ offset = groupCenter - roomcenter;
 
-            Transaction transaction = new Transaction(doc);
-            transaction.Start("Копирование группы объектов");
+                XYZ point = uiDoc.Selection.PickPoint("Выберите точку");
+                Room selectedRoom = GetRoomByPoint(doc, point);
+                XYZ selectedRoomCenter = GetElementCenter(selectedRoom);
+                XYZ selectedPoint = selectedRoomCenter + offset;
+                
 
-            doc.Create.PlaceGroup(point, group.GroupType);
+                Transaction transaction = new Transaction(doc);
+                transaction.Start("Копирование группы объектов");
 
-            transaction.Commit();
+                doc.Create.PlaceGroup(point, group.GroupType);
+
+                transaction.Commit();
+
+            }
+
+            catch(Autodesk.Revit.Exceptions.OperationCanceledException)
+            {
+                return Result.Cancelled;
+            }
+
+            catch (Exception ex)
+            {
+                message = ex.Message;
+                return Result.Failed;
+            }
+
 
             return Result.Succeeded;
 
 
         }
+
+        public XYZ GetElementCenter(Element element)
+        {
+            BoundingBoxXYZ bounding = element.get_BoundingBox(null);
+            return (bounding.Max + bounding.Min) / 2;
+        }
+
+        public Room GetRoomByPoint (Document doc, XYZ point)
+        {
+            FilteredElementCollector collector = new FilteredElementCollector(doc);
+            collector.OfCategory(BuiltInCategory.OST_Rooms);
+            foreach (Element e in collector)
+            {
+                Room room = e as Room;
+                if (room != null)
+                {
+                    if (room.IsPointInRoom(point)) return room;
+                }
+            }
+            return null;
+        }
     }
+      
+
+    public class GroupPickFilter : ISelectionFilter
+    {
+        public bool AllowElement(Element elem)
+        {
+            if (elem.Category.Id.IntegerValue == (int)BuiltInCategory.OST_IOSModelGroups) return true;
+            else return false;
+        }
+
+        public bool AllowReference(Reference reference, XYZ position)
+        {
+            return false;
+        }
+    }
+
+   
+
 }
